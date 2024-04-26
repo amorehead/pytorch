@@ -60,6 +60,7 @@ from .source import (
     AttrSource,
     ChainedSource,
     ConstDictKeySource,
+    ConvertScriptObjectSource,
     DefaultsSource,
     FSDPNNModuleSource,
     GetItemSource,
@@ -749,6 +750,13 @@ class GuardBuilder(GuardBuilderBase):
                 source=source_name,
                 example_value=example_value,
                 guard_manager_enum=guard_manager_enum,
+            )
+        elif istype(source, ConvertScriptObjectSource):
+            assert base_guard_manager  # to make mypy happy
+            return base_guard_manager.lambda_manager(
+                python_lambda=lambda x: x.__obj_flatten__(),
+                source=source_name,
+                example_value=example_value,
             )
         elif istype(source, TupleIteratorGetItemSource):
             assert base_guard_manager  # to make mypy happy

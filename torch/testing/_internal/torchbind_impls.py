@@ -67,25 +67,36 @@ def register_fake_classes():
             self.y = y
 
         @classmethod
-        def from_real(cls, foo):
-            (x, y), _ = foo.__getstate__()
-            return cls(x, y)
+        def __obj_unflatten__(cls, flattend_foo):
+            return cls(**dict(flattend_foo))
+
+        def add_tensor(self, z):
+            return (self.x + self.y) * z
+
+    @torch._library.register_fake_class("_TorchScriptTesting::_Foo2")
+    class FakeFoo2:
+        def __init__(self, x: int, y: int):
+            self.x = x
+            self.y = y
+
+        @classmethod
+        def __obj_unflatten__(cls, flattend_foo):
+            return cls(**dict(flattend_foo))
 
         def add_tensor(self, z):
             return (self.x + self.y) * z
 
     @torch._library.register_fake_class("_TorchScriptTesting::_ContainsTensor")
     class FakeContainsTensor:
-        def __init__(self, x: torch.Tensor):
-            self.x = x
+        def __init__(self, t: torch.Tensor):
+            self.t = t
 
         @classmethod
-        def from_real(cls, foo):
-            ctx = torch.library.get_ctx()
-            return cls(ctx.to_fake_tensor(foo.get()))
+        def __obj_unflatten__(cls, flattend_foo):
+            return cls(**dict(flattend_foo))
 
         def get(self):
-            return self.x
+            return self.t
 
 
 def load_torchbind_test_lib():
