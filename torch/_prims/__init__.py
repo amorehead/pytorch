@@ -12,6 +12,7 @@ import torch._prims_common as utils
 import torch.library
 from torch import sym_float, Tensor, TypedStorage
 from torch._C import _get_default_device
+from torch._library.utils import is_functional_schema
 from torch._prims.debug_prims import register_debug_prims
 from torch._prims.rng_prims import register_rng_prims
 from torch._prims_common import (
@@ -277,8 +278,6 @@ def _make_prim(
 
     """
 
-    prim.define(schema, tags=torch.Tag.pt2_compliant_tag)
-
     def _prim_impl(*args, **kwargs):
         # always run the meta function because aten implementation will
         # typically accept more inputs (e.g., it will do promotion and
@@ -302,9 +301,27 @@ def _make_prim(
             return _prim_impl(*args, **kwargs)
 
     name = schema.split("(")[0]
-    prim_impl.impl(name, _prim_impl)
-    prim_autograd_impl.impl(name, _autograd_impl)
-    prim_meta_impl.impl(name, meta)
+    schema = schema[len(name) :]
+
+    # register non-functional ops with old custom ops API
+    cpp_schema = torch._C.parse_schema(name + schema)
+    if not is_functional_schema(cpp_schema):
+        prim.define(name + schema, tags=torch.Tag.pt2_compliant_tag)
+        prim_impl.impl(name, _prim_impl)
+        prim_autograd_impl.impl(name, _autograd_impl)
+        prim_meta_impl.impl(name, meta)
+    else:
+        mutates_args = []
+        for arg in cpp_schema.arguments:
+            if arg.alias_info is not None and arg.alias_info.is_write:
+                mutates_args.append(arg.name)
+        prim_def = torch.library.custom_op(
+            "prims::" + name,
+            _prim_impl,
+            mutates_args=tuple(mutates_args),
+            schema=schema,
+        )
+        prim_def.register_fake(meta)
 
     _prim_packet = getattr(torch._ops.ops.prims, name)
     _prim = _prim_packet.default
@@ -2316,7 +2333,7 @@ def _reduction_meta(inp, dims, *, output_dtype=None):
     )
 
 
-def _var_reduction_meta(inp, dims, *, correction):
+def _var_reduction_meta(inp, dims, correction):
     if utils.is_complex_dtype(inp.dtype):
         output_dtype = utils.corresponding_real_dtype(inp.dtype)
     else:
@@ -2363,7 +2380,7 @@ def _make_reduction_prim(name: str, impl_aten, doc):
 def _make_var_reduction_prim(name: str, impl_aten, doc):
     """Creates a reduction prim."""
     return _make_prim(
-        schema=f"{name}(Tensor inp, int[]? dims, *, float correction, ScalarType? output_dtype=None) -> Tensor",
+        schema=f"{name}(Tensor inp, int[]? dims, float? correction=1, *, ScalarType? output_dtype=None) -> Tensor",
         meta=_var_reduction_meta,
         impl_aten=impl_aten,
         return_type=RETURN_TYPE.NEW,
@@ -2401,6 +2418,8 @@ def _prod_aten(
     dtype: Optional[torch.dtype] = None,
 ) -> Tensor:
     if dims is not None:
+        if len(dims) == 0:
+            return inp.clone()
         for d in sorted(dims, reverse=True):
             assert d >= 0
             inp = torch.prod(inp, d, dtype=dtype)
@@ -2415,9 +2434,15 @@ prod = _make_reduction_prim(
     doc=_prod_doc,
 )
 
+
+# torch.var, but correction is not kwarg-only
+def torch_var(input, dim=None, correction=1, **kwargs):
+    return torch.var(input, dim=dim, correction=correction, **kwargs)
+
+
 var = _make_var_reduction_prim(
     name="var",
-    impl_aten=torch.var,
+    impl_aten=torch_var,
     doc=_var_doc,
 )
 
