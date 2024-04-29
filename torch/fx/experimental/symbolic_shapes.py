@@ -1709,7 +1709,12 @@ class DimConstraints:
             if s not in self._substitutions
         }
 
-    def solve(self, disable_congruences=True, disable_equivalences=True):
+    def solve(
+        self,
+        disable_congruences=True,
+        disable_equivalences=True,
+        disable_forced_specializations=False,
+    ):
         """Solve the system of constraint equations to find simplified constraints
         """
         self._raise_inconsistencies()
@@ -1736,7 +1741,8 @@ class DimConstraints:
                 self.add(expr.xreplace({s: self._substitutions[s]}))
             self._raise_inconsistencies()
 
-        self._specialize_divisor_symbols()
+        if not disable_forced_specializations:
+            self._specialize_divisor_symbols()
 
         # solve linear congruences
         # NOTE(avik): We do not need to solve them for symbols that have already been specialized.
@@ -1754,8 +1760,9 @@ class DimConstraints:
                         r = try_solve(sympy.Eq(base, divisor * tmp), s)
                         self._dynamic_results.add(self._dcp.doprint(sympy.Eq(s, r[1])))
                     elif disable_congruences:
-                        self._force_specialization(s)
-                        self._univariate_inequalities.pop(s, None)
+                        if not disable_forced_specializations:
+                            self._force_specialization(s)
+                            self._univariate_inequalities.pop(s, None)
 
         # remaining symbols have only pure inequalities (no equalities)
         for s, exprs in self._univariate_inequalities.items():
@@ -1780,9 +1787,10 @@ class DimConstraints:
         for source, expr in symbolic_equivalences:
             if disable_equivalences and not self._is_supported_equivalence(expr):
                 for s in expr.free_symbols:
-                    self._force_specialization(s)
-                    sexpr = self._dcp._print_Symbol(s)
-                    self._dynamic_results = {r for r in self._dynamic_results if sexpr not in r}
+                    if not disable_forced_specializations:
+                        self._force_specialization(s)
+                        sexpr = self._dcp._print_Symbol(s)
+                        self._dynamic_results = {r for r in self._dynamic_results if sexpr not in r}
             self.add_equality(source, expr.xreplace(self._substitutions))
 
         # remaining symbolic equivalences become dynamic equality constraints
@@ -1864,15 +1872,43 @@ class DimConstraints:
     def prettify_results(
         self,
         original_signature: inspect.Signature,
+        dynamic_shapes=None,
         constraint_violation_error=None,
         forced_specializations=None,
     ):
         """Format a message for constraint violation erros"""
         if self._dcp.source_name_to_debug_name:
+
+            # use dynamic shapes spec to order error messages if provided
+            from torch.export.dynamic_shapes import _Dim
+            shapes_order = None
+            if dynamic_shapes:
+                shapes, _ = pytree.tree_flatten(dynamic_shapes)
+                shapes = [shape for shape in shapes if isinstance(shape, _Dim)]
+                shapes_order = {shape.__name__: i for i, shape in enumerate(shapes)}
+
             def transform(s):
                 for k, v in self._dcp.source_name_to_debug_name.items():
                     s = s.replace(k, v)
                 return s
+
+            def order_dict_with_shapes(
+                mapping: Dict[str, Any],
+                shapes_order: Union[Dict[str, int], None],
+                key_fn: Callable[[str], str] = lambda x:x,
+            ):
+                """
+                Orders mapping dict, given order in provided dynamic_shapes,
+                and optional callable on mapping keys.
+                For deterministic error message ordering.
+                """
+                # convert to callable
+                if shapes_order:
+                    shapes_order_fn = lambda x:shapes_order[x]
+                else:
+                    shapes_order_fn = lambda x:x
+                keys = sorted(mapping.keys(), key=lambda x:shapes_order_fn(key_fn(x)))
+                return {k: mapping[k] for k in keys}
 
             results = defaultdict(dict)
 
@@ -1917,6 +1953,13 @@ class DimConstraints:
                     assert op == "==", t
                     results[left]["eq"] = sympy.sympify(right)
 
+            # order forced specializations
+            forced_specializations = order_dict_with_shapes(
+                forced_specializations,
+                shapes_order,
+                key_fn=lambda x:x.split(" = ")[0],
+            )
+
             buf = ""
             debug_names = set()
             if forced_specializations:
@@ -1936,7 +1979,9 @@ class DimConstraints:
             if match is not None:
                 debug_names.update(match.expand(r'\1').split(', '))
 
-            for k, c in sorted(results.items()):
+            # order results
+            results = order_dict_with_shapes(results, shapes_order)
+            for k, c in results.items():
                 # if k not in debug_names:
                 #     continue
                 if "eq" in c:
@@ -1945,7 +1990,7 @@ class DimConstraints:
                         others.append(f"{k} = None  # {other}")
                     elif self._is_supported_equivalence(other):
                         s = next(iter(other.free_symbols))
-                        if s not in results:
+                        if str(s) not in results:
                             modulus, remainder = sympy.polys.polytools.div(other, s)
                             c_min = c.get("min", 2)
                             min_ = math.ceil((c_min - remainder) / modulus)
@@ -3277,6 +3322,7 @@ class ShapeEnv:
         equalities_inputs: Optional[EqualityConstraint] = None,
         _simplified=False,
         # Indicates if we should produce guards for known static values.
+        disable_forced_specializations=False,
         ignore_static=True,
     ) -> List[str]:
         """
@@ -3698,12 +3744,13 @@ class ShapeEnv:
                     constraints = symbol_to_constraints[symbol]
                     for c in constraints:
                         if isinstance(c, StrictMinMaxConstraint):
-                            var_with_range = self._render_range_for_constraint_violation(source, c)
-                            msg = (
-                                f"Not all values of {var_with_range} "
-                                f"satisfy the generated guard {guard_expr}."
-                            )
-                            record_constraint_violation(c.warn_only, self._debug_name(source), msg)
+                            if not disable_forced_specializations:
+                                var_with_range = self._render_range_for_constraint_violation(source, c)
+                                msg = (
+                                    f"Not all values of {var_with_range} "
+                                    f"satisfy the generated guard {guard_expr}."
+                                )
+                                record_constraint_violation(c.warn_only, self._debug_name(source), msg)
                         elif isinstance(c, RelaxedUnspecConstraint):
                             # This is fine, we allow guards here as long as it
                             # didn't constrain it to one value  (we don't

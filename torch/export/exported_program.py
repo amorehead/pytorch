@@ -785,7 +785,10 @@ class ExportedProgram:
             if s.kind == InputKind.USER_INPUT
         ]
         _check_input_constraints_for_graph(
-            input_placeholders, flat_args_with_path, self.range_constraints
+            input_placeholders,
+            flat_args_with_path,
+            self.range_constraints,
+            self.graph_module.meta["disable_forced_specializations"],
         )
 
     def _validate(self):

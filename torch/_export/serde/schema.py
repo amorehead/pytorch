@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from torch._export.serde.union import _Union
 
 # NOTE: Please update this value if any modifications are made to the schema
-SCHEMA_VERSION = (5, 3)
+SCHEMA_VERSION = (5, 4)
 TREESPEC_VERSION = 1
 
 
@@ -359,6 +359,7 @@ class GraphModule:
     # the modules in order to unflatten the modules back to the eager calling
     # conventions.
     module_call_graph: List[ModuleCallEntry]
+    disable_forced_specializations: bool = False
 
 
 # Invariant: Every time a change is made to the schema, one of the versions

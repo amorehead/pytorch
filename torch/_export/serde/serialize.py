@@ -1308,6 +1308,7 @@ class GraphModuleSerializer(metaclass=Final):
             graph=graph,
             signature=self.serialize_signature(self.graph_signature),
             module_call_graph=self.serialize_module_call_graph(self.module_call_graph),
+            disable_forced_specializations=graph_module.meta["disable_forced_specializations"],
         )
 
 
@@ -1814,10 +1815,12 @@ class GraphModuleDeserializer(metaclass=Final):
             module_call_graph = self.deserialize_module_call_graph(
                 serialized_graph_module.module_call_graph
             )
+            graph_module = ep._create_graph_module_for_export(
+                self.module, self.graph
+            )
+            graph_module.meta["disable_forced_specializations"] = serialized_graph_module.disable_forced_specializations
             return GraphModuleDeserializer.Result(
-                graph_module=ep._create_graph_module_for_export(
-                    self.module, self.graph
-                ),
+                graph_module=graph_module,
                 signature=self.signature,
                 module_call_graph=module_call_graph,
                 names_to_symbols=self.symbol_name_to_symbol,

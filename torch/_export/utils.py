@@ -40,7 +40,10 @@ placeholder_prefixes = {
 
 
 def _check_input_constraints_for_graph(
-    input_placeholders: List[torch.fx.Node], flat_args_with_path, range_constraints
+    input_placeholders: List[torch.fx.Node],
+    flat_args_with_path,
+    range_constraints,
+    disable_forced_specializations=False,
 ):
     def get_keystr(key_path: KeyPath) -> str:
         """For a given index into the flat_args, return a human readable string
@@ -144,6 +147,10 @@ def _check_input_constraints_for_graph(
                                 )
                 else:
                     if arg_dim != node_dim:
+                        if disable_forced_specializations and isinstance(
+                            node_dim, torch.SymInt
+                        ):  # deferred sympy expression, we let this pass through
+                            continue
                         raise RuntimeError(
                             f"Expected input at {get_keystr(key_path)}.shape[{j}] to be equal to "
                             f"{node_dim}, but got {arg_dim}",

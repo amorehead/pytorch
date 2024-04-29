@@ -33,6 +33,7 @@ def _check_input_constraints_pre_hook(self, *args, **kwargs):
         [node for node in self.graph.nodes if node.op == "placeholder"],
         flat_args_with_path,
         self.range_constraints,
+        disable_forced_specializations=self.meta["disable_forced_specializations"],
     )
 
 
@@ -279,22 +280,27 @@ def _unlift_exported_program_lifted_states(ep: ExportedProgram) -> torch.nn.Modu
     _register_attrs_to_new_gm(new_gm, ep.graph_signature, ep.state_dict, ep.constants)
 
     lifted_inputs: List[Optional[str]] = [
-        in_spec.target
-        if in_spec.kind
-        in (
-            InputKind.BUFFER,
-            InputKind.CONSTANT_TENSOR,
-            InputKind.PARAMETER,
-            InputKind.CUSTOM_OBJ,
+        (
+            in_spec.target
+            if in_spec.kind
+            in (
+                InputKind.BUFFER,
+                InputKind.CONSTANT_TENSOR,
+                InputKind.PARAMETER,
+                InputKind.CUSTOM_OBJ,
+            )
+            else None
         )
-        else None
         for in_spec in ep.graph_signature.input_specs
     ]
 
     mutated_outputs: List[Optional[str]] = [
-        out_spec.target
-        if out_spec.kind in (OutputKind.BUFFER_MUTATION, OutputKind.USER_INPUT_MUTATION)
-        else None
+        (
+            out_spec.target
+            if out_spec.kind
+            in (OutputKind.BUFFER_MUTATION, OutputKind.USER_INPUT_MUTATION)
+            else None
+        )
         for out_spec in ep.graph_signature.output_specs
     ]
 
