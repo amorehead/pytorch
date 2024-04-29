@@ -165,8 +165,9 @@ class PostGradBatchLinearFusion(BatchFusion):
     """
 
     def _addmm_node_can_be_fused(self, node: torch.fx.Node) -> bool:
+        # pyre-fixme[7]: Expected `bool` but got `Union[bool, Tensor]`
         return (
-            node.kwargs.get("beta", 1.0) == 1.0 and node.kwargs.get("alpha", 1.0) == 1.0  # type: ignore[return-value]
+            node.kwargs.get("beta", 1.0) == 1.0 and node.kwargs.get("alpha", 1.0) == 1.0
         )
 
     def _is_input_2d(self, input: torch.fx.Node) -> bool:
@@ -301,8 +302,7 @@ class GroupLinearFusion(GroupFusion):
             group_biases.append(bias)
 
         if all(bias is None for bias in group_biases):
-            group_biases = None  # type: ignore[assignment]
-        group_biases: Optional[List[Any]]
+            group_biases: Optional[List[Any]] = None  # type: ignore[assignment]
 
         with graph.inserting_before(subset[0]):
             fused_mm = graph.call_function(
@@ -648,11 +648,9 @@ class BatchLayernormFusion(BatchFusion):
         stack_dim = -1 - len(group_shapes[-1])
 
         if all(bias is None for bias in group_biases):
-            group_biases = None  # type: ignore[assignment]
-        group_biases: Optional[List[Any]]
+            group_biases: Optional[List[Any]] = None  # type: ignore[assignment]
         if all(weight is None for weight in group_weights):
-            group_weights = None  # type: ignore[assignment]
-        group_weights: Optional[List[Any]]
+            group_weights: Optional[List[Any]] = None  # type: ignore[assignment]
         assert all(
             eps == group_epss[0] for eps in group_epss
         ), "all epsilon values must be equal"

@@ -24,7 +24,7 @@ from ..pattern_matcher import (
     stable_topological_sort,
 )
 from ..utils import is_cpu_device, pass_execution_and_save
-from .group_batch_fusion import group_batch_fusion_passes
+from .group_batch_fusion import group_batch_fusion_passes, PRE_GRAD_FUSIONS
 from .misc_patterns import numpy_compat_normalization
 from .split_cat import PRE_GRAD_PATTERNS
 
@@ -85,11 +85,20 @@ def remove_split_ops(graph, shape_prop):
     return None
 
 
-# split_cat related fusions
-pattern_matcher_passes = list(PRE_GRAD_PATTERNS.values())
-# non-split_cat related fusions
-# TODO: move them to the fusions dict too.
-pattern_matcher_passes.append(efficient_conv_bn_eval_pass)
+def construct_pre_grad_patterns():
+    for pass_name in config.pre_grad_fusion_options:
+        # exclude all passes from the group batch fusion
+        # since they do not use pattern matcher
+        if pass_name not in PRE_GRAD_FUSIONS:
+            PRE_GRAD_PATTERNS[pass_name] = PatternMatcherPass(
+                prevent_match_across_mutations=True,
+                pass_name=pass_name,
+            )
+    # TODO: move them to the fusions dict too.
+    pattern_matcher_passes = list(PRE_GRAD_PATTERNS.values())
+    pattern_matcher_passes.append(efficient_conv_bn_eval_pass)
+    return pattern_matcher_passes
+
 
 pattern_matcher_passes_aten: List[PatternMatcherPass] = [
     remove_split_with_size_one_pass_aten,
@@ -123,6 +132,8 @@ def pre_grad_passes(gm: torch.fx.GraphModule, example_inputs=None):
     are after functionalization and normalization.
     """
     if config.pattern_matcher:
+        # construct pattern_matcher_passes from config
+        pattern_matcher_passes = construct_pre_grad_patterns()
         lazy_init()
         if hasattr(
             config, "fx_passes_numeric_check"
@@ -134,6 +145,7 @@ def pre_grad_passes(gm: torch.fx.GraphModule, example_inputs=None):
             def shape_prop(mod) -> None:
                 ShapeProp(
                     gm=mod,
+                    # pyre-fixme[16]: Module `torch._dynamo.utils` has no attribute `detect_fake_mode`
                     fake_mode=detect_fake_mode(example_inputs),
                 ).propagate(*example_inputs)
 
@@ -249,7 +261,7 @@ def pre_grad_passes(gm: torch.fx.GraphModule, example_inputs=None):
 
 def fuse_fx(gm: torch.fx.GraphModule, example_inputs) -> torch.fx.GraphModule:
     is_cpu = is_cpu_device(example_inputs)
-
+    # pyre-fixme[16]: Module `torch._dynamo.utils` has no attribute `detect_fake_mode`
     fake_mode = detect_fake_mode(example_inputs)
 
     gm = sink_cat_after_pointwise(gm)

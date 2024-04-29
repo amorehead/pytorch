@@ -27,7 +27,7 @@ from ..pattern_matcher import (
     register_graph_pattern,
     RepeatedExpr,
 )
-from .group_batch_fusion import is_node_meta_valid, POST_GRAD_FUSIONS, PRE_GRAD_FUSIONS
+from .group_batch_fusion import is_node_meta_valid
 
 log = logging.getLogger(__name__)
 
@@ -43,36 +43,6 @@ _Range: TypeAlias = Tuple[int, int]
 
 PRE_GRAD_PATTERNS: Dict[str, PatternMatcherPass] = dict()
 POST_GRAD_PATTERNS: Dict[str, PatternMatcherPass] = dict()
-
-# TODO: read the pass_names from the config after the frontend change
-pass_names = [
-    "normalization_pass",
-    "remove_split_with_size_one_pass",
-    "merge_getitem_cat_pass",
-    "merge_stack_tahn_unbind_pass",
-    "merge_splits_pass",
-    "mutate_cat_pass",
-    "split_cat_pass",
-    "unbind_stack_pass",
-    # must be the last pass
-    "decompose_mm_pass",
-]
-
-for pass_name in pass_names:
-    # exclude all passes from the group batch fusion
-    # they do not use pattern matcher
-    if pass_name in PRE_GRAD_FUSIONS or pass_name in POST_GRAD_FUSIONS:
-        continue
-    if pass_name != "decompose_mm_pass":
-        PRE_GRAD_PATTERNS[pass_name] = PatternMatcherPass(
-            prevent_match_across_mutations=True,
-            pass_name=pass_name,
-        )
-    else:
-        POST_GRAD_PATTERNS[pass_name] = PatternMatcherPass(
-            prevent_match_across_mutations=True,
-            pass_name=pass_name,
-        )
 
 
 def construct_pattern_matcher_pass(pass_name: str) -> PatternMatcherPass:
@@ -92,15 +62,10 @@ def construct_pattern_matcher_pass(pass_name: str) -> PatternMatcherPass:
         )
 
 
-def get_config_flag(pass_name: str, flag="split_cat_fx_passes"):
+def get_config_flag(pass_name: str):
     def flag_check(match):
-        # TODO: remove the flag config check after we have the front end change
-        # currently, pre_grad_fusion_options and post_grad_fusion_options are only have batch fusion
-        # options controlled by the batch_fusion flag, after we extend it to indluce other fusions,
-        # we can only check if the pass_name is in the config
         return (
-            getattr(config, flag)
-            or pass_name in config.pre_grad_fusion_options
+            pass_name in config.pre_grad_fusion_options
             or pass_name in config.post_grad_fusion_options
         )
 

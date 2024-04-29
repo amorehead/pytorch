@@ -44,7 +44,7 @@ from ..pattern_matcher import (
 from ..utils import decode_device, is_pointwise_use
 from ..virtualized import V
 from .ddp_fusion import fuse_ddp_communication
-from .group_batch_fusion import group_batch_fusion_passes
+from .group_batch_fusion import group_batch_fusion_passes, POST_GRAD_FUSIONS
 from .pre_grad import is_same_dict, save_inductor_dict
 from .reinplace import reinplace_inplaceable_ops
 from .split_cat import POST_GRAD_PATTERNS
@@ -54,7 +54,18 @@ log = logging.getLogger(__name__)
 aten = torch.ops.aten
 prims = torch.ops.prims
 
-pattern_matcher_passes = POST_GRAD_PATTERNS.values()
+def construct_post_grad_patterns():
+    for pass_name in config.post_grad_fusion_options:
+        # exclude all passes from the group batch fusion
+        # since they do not use pattern matcher
+        if pass_name not in POST_GRAD_FUSIONS:
+            POST_GRAD_PATTERNS[pass_name] = PatternMatcherPass(
+                prevent_match_across_mutations=True,
+                pass_name=pass_name,
+            )
+    return list(POST_GRAD_PATTERNS.values())
+
+
 # First pass_patterns[0] are applied, then [1], then [2]
 pass_patterns = [
     PatternMatcherPass(),
@@ -83,6 +94,7 @@ def post_grad_passes(gm: torch.fx.GraphModule, is_inference: bool):
         config.post_grad_custom_pre_pass(gm.graph)
 
     if config.pattern_matcher:
+        pattern_matcher_passes = construct_post_grad_patterns()
         lazy_init()
         optimus_scuba_log["before_recompile_post_grad"] = upload_graph(gm.graph)
         group_batch_fusion_passes(gm.graph, pre_grad=False)
