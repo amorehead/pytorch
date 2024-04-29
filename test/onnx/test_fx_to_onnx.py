@@ -868,7 +868,7 @@ class TestFxToOnnx(pytorch_test_common.ExportTestCase):
 
     def test_fail_optimize(self):
         # Monkey patching onnxscript's optimizer
-        import onnxscript
+        from onnxscript import optimizer
 
         def monkey_optimize(
             model,
@@ -881,7 +881,7 @@ class TestFxToOnnx(pytorch_test_common.ExportTestCase):
         ):
             raise RuntimeError("It's tough to be a bug!")
 
-        onnxscript.optimizer.optimize = monkey_optimize
+        optimizer.optimize = monkey_optimize
 
         class MyModel(torch.nn.Module):
             def forward(self, x):
