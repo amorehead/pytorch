@@ -35,9 +35,10 @@ from .codegen.triton import (
 from .codegen.triton_utils import config_of, signature_to_meta
 from .exc import CUDACompileError
 from .ir import ChoiceCaller, PrimitiveInfoType
-from .runtime.runtime_utils import do_bench
+from .runtime.runtime_utils import do_bench, do_bench_cpu
 from .utils import (
     get_dtype_size,
+    is_cpu_device,
     Placeholder,
     sympy_dot,
     sympy_index_symbol,
@@ -841,7 +842,10 @@ class ExternKernelCaller(ChoiceCaller):
                 out_new, tuple(out.size()), tuple(out.stride())
             )
             out.copy_(out_new)  # for correctness checking
-            return do_bench(lambda: algo(*args))
+            if is_cpu_device(args):
+                return do_bench_cpu(lambda: algo(*args))
+            else:
+                return do_bench(lambda: algo(*args))
 
     def to_callable(self):
         fn = self.choice.to_callable()
@@ -1013,7 +1017,6 @@ class AlgorithmSelectorCache(PersistentCache):
                 [c for c in choices if hasattr(c, "precompile")],
                 timeout=precompilation_timeout_seconds,
             )
-            from triton.runtime.autotuner import OutOfResources
 
             @functools.lru_cache(None)
             def wait_on_futures():
@@ -1033,9 +1036,17 @@ class AlgorithmSelectorCache(PersistentCache):
                     )
                 except StopIteration:
                     pass
-                except OutOfResources:
-                    # This config is invalid due to requiring too many resources
-                    pass
+                except Exception as e:
+                    try:
+                        from triton.runtime.autotuner import OutOfResources
+
+                        if isinstance(e, OutOfResources):
+                            # This config is invalid due to requiring too many resources
+                            pass
+                        else:
+                            raise e
+                    except ImportError:
+                        raise e
 
                 executor.shutdown(wait=True)
 
@@ -1197,12 +1208,11 @@ class AlgorithmSelectorCache(PersistentCache):
                 result = choice.benchmark(*example_inputs, out=out)
             if VERIFY:
                 torch.testing.assert_close(out_extern, expected, **VERIFY)
-            torch.cuda.synchronize()  # shake out any CUDA errors
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()  # shake out any CUDA errors
             return result
 
         def benchmark_in_current_process(choices):
-            from triton.runtime.autotuner import OutOfResources
-
             inputs = get_inputs()
             example_inputs, _, out, _, _ = inputs
             timings = {}
@@ -1226,14 +1236,21 @@ class AlgorithmSelectorCache(PersistentCache):
                         raise ErrorFromChoice(
                             msg, choice, debug_str(example_inputs, out)
                         ) from e
-                except OutOfResources as e:
-                    log.warning(e)
-                    timing = float("inf")
-
                 except AssertionError as e:
                     raise AssertionError(  # noqa: TRY200
                         f"Incorrect result from choice {choice}\n\n{e}"
                     )
+                except Exception as e:
+                    try:
+                        from triton.runtime.autotuner import OutOfResources
+
+                        if isinstance(e, OutOfResources):
+                            log.warning(e)
+                            timing = float("inf")
+                        else:
+                            raise e
+                    except ImportError:
+                        raise e
 
                 timings[choice] = timing
 
